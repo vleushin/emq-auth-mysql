@@ -34,20 +34,29 @@ init({AuthQuery, SuperQuery, HashType}) ->
 check(#mqtt_client{username = Username}, Password, _State) when ?EMPTY(Username); ?EMPTY(Password) ->
     {error, username_or_password_undefined};
 
-check(Client, Password, #state{auth_query  = {AuthSql, AuthParams},
-                               super_query = SuperQuery,
-                               hash_type   = HashType}) ->
-    Result = case query(AuthSql, AuthParams, Client) of
-                 {ok, [<<"password">>], [[PassHash]]} ->
-                     check_pass(PassHash, Password, HashType);
-                 {ok, [<<"password">>, <<"salt">>], [[PassHash, Salt]]} ->
-                     check_pass(PassHash, Salt, Password, HashType);
-                 {ok, _Columns, []} ->
-                     {error, notfound};
-                 {error, Reason} ->
-                     {error, Reason}
+check(Client, Password, #state{
+    auth_query = {AuthSql, AuthParams},
+    super_query = SuperQuery,
+    hash_type = HashType}) ->
+    Result = case check_client_id(Client) of
+                 ok ->
+                     case query(AuthSql, AuthParams, Client) of
+                         {ok, [<<"password">>], [[PassHash]]} ->
+                             check_pass(PassHash, Password, HashType);
+                         {ok, [<<"password">>, <<"salt">>], [[PassHash, Salt]]} ->
+                             check_pass(PassHash, Salt, Password, HashType);
+                         {ok, _Columns, []} ->
+                             {error, notfound};
+                         {error, Reason} ->
+                             {error, Reason}
+                     end;
+                 _Error -> _Error
              end,
-    case Result of ok -> {ok, is_superuser(SuperQuery, Client)}; Error -> Error end.
+    case Result of
+        ok ->
+            {ok, is_superuser(SuperQuery, Client)};
+        Error -> Error
+    end.
 
 check_pass(PassHash, Password, HashType) ->
     check_pass(PassHash, hash(HashType, Password)).
@@ -56,10 +65,28 @@ check_pass(PassHash, Salt, Password, {salt, HashType}) ->
 check_pass(PassHash, Salt, Password, {HashType, salt}) ->
     check_pass(PassHash, hash(HashType, <<Password/binary, Salt/binary>>)).
 
-check_pass(PassHash, PassHash) -> ok;
-check_pass(_, _)               -> {error, password_error}.
+check_pass(PassHash, PassHash) ->
+    ok;
+check_pass(_, _) ->
+    {error, password_error}.
 
-description() -> "Authentication with MySQL".
+description() ->
+    "Authentication with MySQL".
 
-hash(Type, Password) -> emqttd_auth_mod:passwd_hash(Type, Password).
+hash(Type, Password) ->
+    emqttd_auth_mod:passwd_hash(Type, Password).
 
+% We expect ClientId to be in format username_someid to prevent ClientId abuse
+check_client_id(#mqtt_client{username = Username, client_id = ClientId}) ->
+    case byte_size(ClientId) =< byte_size(Username) + 1 of
+        true ->
+            {error, "Bad client id"};
+        false ->
+            ExpectedScope = {0, byte_size(Username) + 1},
+            case binary:match(ClientId, <<Username/binary, "_">>, [{scope, ExpectedScope}]) of
+                ExpectedScope ->
+                    ok;
+                _Rest ->
+                    {error, "Bad client id"}
+            end
+    end.
