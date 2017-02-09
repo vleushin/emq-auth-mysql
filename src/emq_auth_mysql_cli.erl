@@ -23,17 +23,17 @@
 
 -include_lib("emqttd/include/emqttd.hrl").
 
--export([is_superuser/2, parse_query/1, connect/1, query/3]).
+-export([is_superuser/3, parse_query/1, connect/1, query/4]).
 
 %%--------------------------------------------------------------------
 %% Is Superuser?
 %%--------------------------------------------------------------------
 
--spec(is_superuser(undefined | {string(), list()}, mqtt_client()) -> boolean()).
-is_superuser(undefined, _Client) ->
+-spec(is_superuser(undefined | {string(), list()}, string(), mqtt_client()) -> boolean()).
+is_superuser(undefined, _Password, _Client) ->
     false;
-is_superuser({SuperSql, Params}, Client) ->
-    case query(SuperSql, Params, Client) of
+is_superuser({SuperSql, Params}, Password, Client) ->
+    case query(SuperSql, Params, Password, Client) of
         {ok, [_Super], [[1]]} ->
             true;
         {ok, [_Super], [[_False]]} ->
@@ -51,10 +51,10 @@ is_superuser({SuperSql, Params}, Client) ->
 parse_query(undefined) ->
     undefined;
 parse_query(Sql) ->
-    case re:run(Sql, "'%[uca]'", [global, {capture, all, list}]) of
+    case re:run(Sql, "'%[ucap]'", [global, {capture, all, list}]) of
         {match, Variables} ->
             Params = [Var || [Var] <- Variables],
-            {re:replace(Sql, "'%[uca]'", "?", [global, {return, list}]), Params};
+            {re:replace(Sql, "'%[ucap]'", "?", [global, {return, list}]), Params};
         nomatch ->
             {Sql, []}
     end.
@@ -66,20 +66,22 @@ parse_query(Sql) ->
 connect(Options) ->
     mysql:start_link(Options).
 
-query(Sql, Params, Client) ->
-    ecpool:with_client(?APP, fun(C) -> mysql:query(C, Sql, replvar(Params, Client)) end).
+query(Sql, Params, Password, Client) ->
+    ecpool:with_client(?APP, fun(C) -> mysql:query(C, Sql, replvar(Params, Password, Client)) end).
 
-replvar(Params, Client) ->
-    replvar(Params, Client, []).
+replvar(Params, Password, Client) ->
+    replvar(Params, Password, Client, []).
 
-replvar([], _Client, Acc) ->
+replvar([], _Password, _Client, Acc) ->
     lists:reverse(Acc);
-replvar(["'%u'" | Params], Client = #mqtt_client{username = Username}, Acc) ->
-    replvar(Params, Client, [Username | Acc]);
-replvar(["'%c'" | Params], Client = #mqtt_client{client_id = ClientId}, Acc) ->
-    replvar(Params, Client, [ClientId | Acc]);
-replvar(["'%a'" | Params], Client = #mqtt_client{peername = {IpAddr, _}}, Acc) ->
-    replvar(Params, Client, [inet_parse:ntoa(IpAddr) | Acc]);
-replvar([Param | Params], Client, Acc) ->
-    replvar(Params, Client, [Param | Acc]).
+replvar(["'%u'" | Params], Password, Client = #mqtt_client{username = Username}, Acc) ->
+    replvar(Params, Password, Client, [Username | Acc]);
+replvar(["'%c'" | Params], Password, Client = #mqtt_client{client_id = ClientId}, Acc) ->
+    replvar(Params, Password, Client, [ClientId | Acc]);
+replvar(["'%a'" | Params], Password, Client = #mqtt_client{peername = {IpAddr, _}}, Acc) ->
+    replvar(Params, Password, Client, [inet_parse:ntoa(IpAddr) | Acc]);
+replvar(["'%p'" | Params], Password, Client, Acc) ->
+    replvar(Params, Password, Client, [Password | Acc]);
+replvar([Param | Params], Password, Client, Acc) ->
+    replvar(Params, Password, Client, [Param | Acc]).
 

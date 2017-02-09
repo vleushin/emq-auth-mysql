@@ -20,7 +20,7 @@
 
 -include_lib("emqttd/include/emqttd.hrl").
 
--import(emq_auth_mysql_cli, [is_superuser/2, query/3]).
+-import(emq_auth_mysql_cli, [is_superuser/3, query/4]).
 
 -export([init/1, check/3, description/0]).
 
@@ -40,7 +40,7 @@ check(Client, Password, #state{
     hash_type = HashType}) ->
     Result = case check_client_id(Client) of
                  ok ->
-                     case query(AuthSql, AuthParams, Client) of
+                     case query(AuthSql, AuthParams, Password, Client) of
                          {ok, [<<"password">>], [[PassHash]]} ->
                              check_pass(PassHash, Password, HashType);
                          {ok, [<<"password">>, <<"salt">>], [[PassHash, Salt]]} ->
@@ -54,7 +54,7 @@ check(Client, Password, #state{
              end,
     case Result of
         ok ->
-            {ok, is_superuser(SuperQuery, Client)};
+            {ok, is_superuser(SuperQuery, Password, Client)};
         Error -> Error
     end.
 
